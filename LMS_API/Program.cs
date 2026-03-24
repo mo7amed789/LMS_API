@@ -3,24 +3,20 @@ using LMS_API.Data;
 using LMS_API.Middleware;
 using LMS_API.Services;
 using LMS_API.Services.Interfaces;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.Extensions.Options;
 using NSwag;
 using NSwag.Generation.Processors.Security;
 using Serilog;
 using Serilog.Events;
 using System.Text;
 using System.Text.Json.Serialization;
-using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-
-// =============================
-// Logging (Serilog)
-// =============================
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
@@ -31,40 +27,29 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
-
-// =============================
-// Database
-// =============================
 builder.Services.AddDbContext<LMSDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("Default")
+    ?? throw new InvalidOperationException("Connection string 'Default' is missing.")));
 
-
-// =============================
-// Services (DI)
-// =============================
-builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IEmailService, EmailService>();
-
-
-// =============================
-// JWT Settings (Options Pattern)
-// =============================
 builder.Services.AddOptions<JwtSettings>()
     .Bind(builder.Configuration.GetSection("Jwt"))
-    .Validate(x => !string.IsNullOrEmpty(x.Key), "JWT Key is required")
+    .Validate(x => !string.IsNullOrWhiteSpace(x.Key), "JWT Key is required")
+    .Validate(x => !string.IsNullOrWhiteSpace(x.Issuer), "JWT Issuer is required")
+    .Validate(x => !string.IsNullOrWhiteSpace(x.Audience), "JWT Audience is required")
     .ValidateOnStart();
 
+builder.Services.AddOptions<AppUrlSettings>()
+    .Bind(builder.Configuration.GetSection("AppUrls"))
+    .Validate(x => !string.IsNullOrWhiteSpace(x.ApiBaseUrl), "AppUrls:ApiBaseUrl is required")
+    .Validate(x => !string.IsNullOrWhiteSpace(x.FrontendBaseUrl), "AppUrls:FrontendBaseUrl is required")
+    .ValidateOnStart();
 
-// =============================
-// JWT Authentication
-// =============================
-var jwtSettings = builder.Configuration
-    .GetSection("Jwt")
-    .Get<JwtSettings>()
+var jwtSettings = builder.Configuration.GetSection("Jwt").Get<JwtSettings>()
     ?? throw new InvalidOperationException("JWT settings are missing");
 
-builder.Services.AddAuthentication("Bearer")
-    .AddJwtBearer("Bearer", options =>
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -72,24 +57,18 @@ builder.Services.AddAuthentication("Bearer")
             ValidateAudience = true,
             ValidateIssuerSigningKey = true,
             ValidateLifetime = true,
-
             ValidIssuer = jwtSettings.Issuer,
             ValidAudience = jwtSettings.Audience,
-
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtSettings.Key)
-            ),
-
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key)),
             ClockSkew = TimeSpan.Zero
         };
     });
 
+builder.Services.AddAuthorization();
 
-// =============================
-// Rate Limiting
-// =============================
 builder.Services.AddRateLimiter(options =>
 {
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddFixedWindowLimiter("AuthPolicy", opt =>
     {
         opt.PermitLimit = 5;
@@ -98,18 +77,29 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("FrontendPolicy", policy =>
+    {
+        var frontendUrl = builder.Configuration["AppUrls:FrontendBaseUrl"];
+        if (!string.IsNullOrWhiteSpace(frontendUrl))
+        {
+            policy.WithOrigins(frontendUrl)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
+    });
+});
 
-// =============================
-// Controllers + JSON
-// =============================
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
+
 builder.Services.AddControllers()
-    .AddJsonOptions(x =>
-        x.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
+    .AddJsonOptions(x => x.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
 
-
-// =============================
-// Swagger (NSwag)
-// =============================
+builder.Services.AddHealthChecks();
+builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddOpenApiDocument(config =>
@@ -118,42 +108,46 @@ builder.Services.AddOpenApiDocument(config =>
     config.Version = "v1";
     config.Description = "Learning Management System API";
 
-    config.AddSecurity("JWT", Enumerable.Empty<string>(), new NSwag.OpenApiSecurityScheme
+    config.AddSecurity("JWT", Enumerable.Empty<string>(), new OpenApiSecurityScheme
     {
-        Type = NSwag.OpenApiSecuritySchemeType.ApiKey,
+        Type = OpenApiSecuritySchemeType.ApiKey,
         Name = "Authorization",
-        In = NSwag.OpenApiSecurityApiKeyLocation.Header,
+        In = OpenApiSecurityApiKeyLocation.Header,
         Description = "Enter: Bearer {your token}"
     });
 
-    config.OperationProcessors.Add(
-        new AspNetCoreOperationSecurityScopeProcessor("JWT"));
+    config.OperationProcessors.Add(new AspNetCoreOperationSecurityScopeProcessor("JWT"));
 });
 
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+});
 
-// =============================
-// Build App
-// =============================
 var app = builder.Build();
 
-
-// =============================
-// Middleware Pipeline
-// =============================
+app.UseForwardedHeaders();
 app.UseSerilogRequestLogging();
-
 app.UseMiddleware<ExceptionMiddleware>();
 
-app.UseOpenApi();
-app.UseSwaggerUi();
+if (app.Environment.IsDevelopment())
+{
+    app.UseOpenApi();
+    app.UseSwaggerUi();
+}
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
 
 app.UseHttpsRedirection();
-
+app.UseCors("FrontendPolicy");
 app.UseRateLimiter();
-
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.MapHealthChecks("/health");
 app.MapControllers();
 
 app.Run();

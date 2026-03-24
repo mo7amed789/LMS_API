@@ -1,41 +1,42 @@
-﻿using System.Net;
+using System.Net;
 using System.Text.Json;
 
-namespace LMS_API.Middleware
+namespace LMS_API.Middleware;
+
+public class ExceptionMiddleware
 {
-    public class ExceptionMiddleware
+    private readonly RequestDelegate _next;
+    private readonly ILogger<ExceptionMiddleware> _logger;
+    private readonly IHostEnvironment _environment;
+
+    public ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddleware> logger, IHostEnvironment environment)
     {
-        private readonly RequestDelegate _next;
-        private readonly ILogger<ExceptionMiddleware> _logger;
+        _next = next;
+        _logger = logger;
+        _environment = environment;
+    }
 
-        public ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddleware> logger)
+    public async Task InvokeAsync(HttpContext context)
+    {
+        try
         {
-            _next = next;
-            _logger = logger;
+            await _next(context);
         }
-
-        public async Task InvokeAsync(HttpContext context)
+        catch (Exception ex)
         {
-            try
+            _logger.LogError(ex, "Unhandled exception while processing {Path}", context.Request.Path);
+
+            context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+            context.Response.ContentType = "application/json";
+
+            var response = new
             {
-                await _next(context);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unhandled Exception");
+                success = false,
+                message = "An unexpected error occurred.",
+                detail = _environment.IsDevelopment() ? ex.Message : null
+            };
 
-                context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                context.Response.ContentType = "application/json";
-
-                var response = new
-                {
-                    success = false,
-                    message = "Something went wrong",
-                    detail = ex.Message // شيلها في production لو عايز
-                };
-
-                await context.Response.WriteAsync(JsonSerializer.Serialize(response));
-            }
+            await context.Response.WriteAsync(JsonSerializer.Serialize(response));
         }
     }
 }

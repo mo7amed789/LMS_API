@@ -13,7 +13,7 @@ namespace LMS_API.Domain.Entities
         public DateTime? PasswordResetTokenExpires { get; set; }
 
         public UserRole Role { get; set; } = UserRole.Student;
-        public ICollection<RefreshToken> RefreshTokens { get; set; }
+        public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
         public ICollection<Enrollment> Enrollments { get; set; } = new List<Enrollment>();
         public ICollection<Course> Courses { get; set; } = new List<Course>();
     }

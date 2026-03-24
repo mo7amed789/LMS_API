@@ -1,7 +1,9 @@
-﻿namespace LMS_API.DTOs
+using System.ComponentModel.DataAnnotations;
+
+namespace LMS_API.DTOs;
+
+public sealed class ForgotPasswordDto
 {
-    public class ForgotPasswordDto
-    {
-        public string Email { get; set; }
-    }
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
 }

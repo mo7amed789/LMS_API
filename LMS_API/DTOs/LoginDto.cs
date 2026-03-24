@@ -1,8 +1,12 @@
-﻿namespace LMS_API.DTOs
+using System.ComponentModel.DataAnnotations;
+
+namespace LMS_API.DTOs;
+
+public sealed record LoginDto
 {
-    public sealed record LoginDto
-    {
-        public string Email { get; init; }
-        public string Password { get; init; }
-    }
+    [Required, EmailAddress]
+    public string Email { get; init; } = string.Empty;
+
+    [Required, MinLength(6)]
+    public string Password { get; init; } = string.Empty;
 }

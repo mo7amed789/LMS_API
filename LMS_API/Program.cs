@@ -1,3 +1,4 @@
+using LMS_API;
 using LMS_API.Data;
 using LMS_API.Middleware;
 using LMS_API.Services;
@@ -5,6 +6,7 @@ using LMS_API.Services.Interfaces;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Options;
 using NSwag;
 using NSwag.Generation.Processors.Security;
 using Serilog;
@@ -45,10 +47,21 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 
 
 // =============================
+// JWT Settings (Options Pattern)
+// =============================
+builder.Services.AddOptions<JwtSettings>()
+    .Bind(builder.Configuration.GetSection("Jwt"))
+    .Validate(x => !string.IsNullOrEmpty(x.Key), "JWT Key is required")
+    .ValidateOnStart();
+
+
+// =============================
 // JWT Authentication
 // =============================
-var jwtKey = builder.Configuration["Jwt:Key"]
-    ?? throw new Exception("JWT Key is missing in configuration");
+var jwtSettings = builder.Configuration
+    .GetSection("Jwt")
+    .Get<JwtSettings>()
+    ?? throw new InvalidOperationException("JWT settings are missing");
 
 builder.Services.AddAuthentication("Bearer")
     .AddJwtBearer("Bearer", options =>
@@ -60,14 +73,14 @@ builder.Services.AddAuthentication("Bearer")
             ValidateIssuerSigningKey = true,
             ValidateLifetime = true,
 
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
+            ValidIssuer = jwtSettings.Issuer,
+            ValidAudience = jwtSettings.Audience,
 
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtKey)
+                Encoding.UTF8.GetBytes(jwtSettings.Key)
             ),
 
-            ClockSkew = TimeSpan.Zero // 🔥 مهم
+            ClockSkew = TimeSpan.Zero
         };
     });
 
@@ -105,7 +118,6 @@ builder.Services.AddOpenApiDocument(config =>
     config.Version = "v1";
     config.Description = "Learning Management System API";
 
-    // 🔐 JWT Security (FIXED)
     config.AddSecurity("JWT", Enumerable.Empty<string>(), new NSwag.OpenApiSecurityScheme
     {
         Type = NSwag.OpenApiSecuritySchemeType.ApiKey,
@@ -132,7 +144,6 @@ app.UseSerilogRequestLogging();
 
 app.UseMiddleware<ExceptionMiddleware>();
 
-// ✅ NSwag الصحيح
 app.UseOpenApi();
 app.UseSwaggerUi();
 

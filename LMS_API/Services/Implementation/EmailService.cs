@@ -1,6 +1,6 @@
 using LMS_API.Services.Interfaces;
-using SendGrid;
-using SendGrid.Helpers.Mail;
+using System.Net;
+using System.Net.Mail;
 
 namespace LMS_API.Services;
 
@@ -17,25 +17,37 @@ public class EmailService : IEmailService
 
     public async Task SendEmailAsync(string toEmail, string subject, string htmlContent)
     {
-        var apiKey = _config["SendGrid:ApiKey"];
-        var fromEmail = _config["SendGrid:FromEmail"];
-        var fromName = _config["SendGrid:FromName"];
+        var fromEmail = _config["EmailSettings:Email"];
+        var appPassword = _config["EmailSettings:AppPassword"];
 
-        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(fromEmail))
+        if (string.IsNullOrWhiteSpace(fromEmail) || string.IsNullOrWhiteSpace(appPassword))
+            throw new Exception("Email settings not configured");
+
+        var smtp = new SmtpClient("smtp.gmail.com", 587)
         {
-            throw new InvalidOperationException("SendGrid configuration is missing.");
+            Credentials = new NetworkCredential(fromEmail, appPassword),
+            EnableSsl = true
+        };
+
+        var message = new MailMessage
+        {
+            From = new MailAddress(fromEmail, "LMS"),
+            Subject = subject,
+            Body = htmlContent,
+            IsBodyHtml = true
+        };
+
+        message.To.Add(toEmail);
+
+        try
+        {
+            await smtp.SendMailAsync(message);
+            _logger.LogInformation("Email sent to {Email}", toEmail);
         }
-
-        var client = new SendGridClient(apiKey);
-        var from = new EmailAddress(fromEmail, fromName);
-        var to = new EmailAddress(toEmail);
-        var msg = MailHelper.CreateSingleEmail(from, to, subject, string.Empty, htmlContent);
-
-        var response = await client.SendEmailAsync(msg);
-
-        if (!response.IsSuccessStatusCode)
+        catch (Exception ex)
         {
-            _logger.LogWarning("SendGrid returned status code {StatusCode} when sending to {Email}", response.StatusCode, toEmail);
+            _logger.LogError(ex, "Failed to send email");
+            throw;
         }
     }
 }

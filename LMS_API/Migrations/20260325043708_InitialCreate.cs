@@ -75,7 +75,7 @@ namespace LMS_API.Migrations
                 {
                     Id = table.Column<int>(type: "int", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
-                    Token = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    TokenHash = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     ExpiresAt = table.Column<DateTime>(type: "datetime2", nullable: false),
                     Device = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     IPAddress = table.Column<string>(type: "nvarchar(max)", nullable: true),

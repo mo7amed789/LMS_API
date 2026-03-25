@@ -138,16 +138,9 @@ public class AuthController : ControllerBase
     }
 
     [EnableRateLimiting("AuthPolicy")]
-    [HttpPost("reset-password")]
-    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
-    {
-        if (!ModelState.IsValid)
-            return ValidationProblem(ModelState);
-
-        var result = await _service.ResetPasswordAsync(dto.Token, dto.NewPassword);
-        if (!result.IsSuccess)
-            return BadRequest(result.Message);
-
-        return Ok(result.Message);
-    }
+    [HttpGet("reset-password")]
+public IActionResult ResetPasswordPage([FromQuery] string token)
+{
+    return Ok(new { token });
+}
 }
